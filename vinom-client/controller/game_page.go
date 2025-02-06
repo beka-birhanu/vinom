@@ -14,8 +14,8 @@ import (
 var directions = map[tcell.Key]string{
 	tcell.KeyUp:    "North",
 	tcell.KeyDown:  "South",
-	tcell.KeyLeft:  "East",
-	tcell.KeyRight: "West",
+	tcell.KeyLeft:  "West",
+	tcell.KeyRight: "East",
 }
 
 // Additional handling for Vim motions
@@ -31,22 +31,23 @@ type Game struct {
 	gameServer   i.GameServer
 	playerColors map[uuid.UUID]string
 	playerID     uuid.UUID
+	app          *tview.Application
 	mazeTV       *tview.TextView
-	scoreTV      *tview.TextView
+	scoreTV      *tview.Table
 	pingTV       *tview.TextView
 	stopChan     chan struct{}
 }
 
 // NewGame creates a new MazeGame instance
-func NewGame(gmSrvr i.GameServer, pID uuid.UUID) *Game {
+func NewGame(gmSrvr i.GameServer, pID uuid.UUID) (*Game, error) {
 	return &Game{
 		gameServer: gmSrvr,
 		playerID:   pID,
 		mazeTV:     tview.NewTextView().SetDynamicColors(true),
-		scoreTV:    tview.NewTextView().SetDynamicColors(true),
+		scoreTV:    tview.NewTable(),
 		pingTV:     tview.NewTextView().SetDynamicColors(true),
 		stopChan:   make(chan struct{}),
-	}
+	}, nil
 }
 
 func (g *Game) handleInput(event *tcell.EventKey) *tcell.EventKey {
@@ -61,47 +62,44 @@ func (g *Game) handleInput(event *tcell.EventKey) *tcell.EventKey {
 }
 
 // startApp starts the Tview app with the layout
-func (g *Game) StartApp(app *tview.Application) {
+func (g *Game) Start(app *tview.Application, authToken []byte) {
+	g.app = app
+	g.app.Stop()
+	g.gameServer.SetOnStateChange(func(gs i.GameState) {
+		g.renderMaze(gs)
+		g.renderScoreboard(gs)
+		g.app.Draw()
+	})
+	g.gameServer.SetOnPingResult(func(ping int64) {
+		g.renderPing(ping)
+		g.app.Draw()
+	})
+
 	// Combine maze, scoreboard, and ping into a Flex layout
 	layout := tview.NewFlex().
 		AddItem(g.mazeTV, 0, 3, true).   // Maze occupies 3/4 of the screen width
 		AddItem(g.scoreTV, 0, 1, false). // Scoreboard
 		AddItem(g.pingTV, 0, 1, false)   // Ping
 
-	app.SetInputCapture(g.handleInput)
+	g.app.SetInputCapture(g.handleInput)
 	g.mazeTV.SetText("loading...")
+	go g.gameServer.Start(authToken)
 
 	go func() {
 		if err := app.SetRoot(layout, true).Run(); err != nil {
 			panic(err)
 		}
 	}()
-	g.listenAndRender()
 
 	for range g.stopChan {
-		app.Stop()
+		g.app.Stop()
 		return
 	}
 }
 
-func (g *Game) listenAndRender() {
-	go func() {
-		for gameState := range g.gameServer.StateChan() {
-			g.renderMaze(gameState)
-			g.renderScoreboard(gameState)
-		}
-	}()
-
-	go func() {
-		for ping := range g.gameServer.PingChan() {
-			g.renderPing(ping)
-		}
-	}()
-}
-
 func isPlayerPos(x int, y int, players []i.Player) i.Player {
 	for _, player := range players {
-		if int(player.RetrivePos().GetRow()) == x && int(player.RetrivePos().GetCol()) == y {
+		if int(player.RetrivePos().GetRow())*2 == y && int(player.RetrivePos().GetCol())*2+1 == x {
 			return player
 		}
 	}
@@ -190,12 +188,23 @@ func (g *Game) renderMaze(gs i.GameState) {
 	g.mazeTV.SetText(builder.String())
 }
 
-func (mg *Game) renderScoreboard(gs i.GameState) {
-	text := fmt.Sprintf("[yellow]SCOREBOARD\n\n[white]Score: [green]%d", gs.RetrivePlayers()[0].GetReward())
-	mg.scoreTV.SetText(text)
+func (g *Game) renderScoreboard(gs i.GameState) {
+	players := gs.RetrivePlayers()
+	g.scoreTV.Clear()
+
+	// Set headers
+	g.scoreTV.SetCell(0, 0, tview.NewTableCell("Player").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+	g.scoreTV.SetCell(0, 1, tview.NewTableCell("Score").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+
+	// Add player scores
+	for i, player := range players {
+		g.scoreTV.SetCell(i+1, 0, tview.NewTableCell(g.playerRepr(player.GetID(), players)).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
+		g.scoreTV.SetCell(i+1, 1, tview.NewTableCell(fmt.Sprintf("%d", player.GetReward())).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
+	}
 }
 
-func (mg *Game) renderPing(ping int64) {
+func (g *Game) renderPing(ping int64) {
 	text := fmt.Sprintf("[yellow]PING\n\n[white]Ping: [cyan]%dms", ping)
-	mg.pingTV.SetText(text)
+	g.pingTV.SetText(text)
+	g.app.Draw()
 }

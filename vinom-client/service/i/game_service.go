@@ -3,6 +3,6 @@ package i
 type GameServer interface {
 	Move(string)
 	Start([]byte) error
-	StateChan() <-chan GameState
-	PingChan() <-chan int64
+	SetOnStateChange(f func(GameState))
+	SetOnPingResult(f func(int64))
 }

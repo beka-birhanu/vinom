@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	moveActionType         = 1 << iota // Action type for movement.
+	moveActionType         = 3 << iota // Action type for movement.
 	stateRequestActionType             // Action type for state requests.
 
 	gameStateRecordType = 10
@@ -21,8 +21,8 @@ type GameServer struct {
 	onGameEnd        func(i.GameState)
 	gameState        i.GameState
 	playerID         uuid.UUID
-	stateChan        chan i.GameState
-	pingChan         chan int64
+	onStateChange    func(i.GameState)
+	onPingResult     func(int64)
 	sync.Mutex
 }
 
@@ -50,27 +50,19 @@ func (g *GameServer) Start(authToken []byte) error {
 	if err != nil {
 		return err
 	}
-
-	g.stateChan = make(chan i.GameState)
-	g.pingChan = make(chan int64)
-	return g.requestGameState()
+	return nil
 }
 
 func (g *GameServer) Stop() error {
 	g.serverConnection.Disconnect()
-	close(g.stateChan)
-	close(g.pingChan)
 	return nil
-}
-
-func (g *GameServer) requestGameState() error {
-	return g.serverConnection.SendToServer(stateRequestActionType, []byte{})
 }
 
 // move implements i.GameServer.
 func (g *GameServer) Move(direction string) {
 	action := g.encoder.NewAction()
 	action.SetDirection(direction)
+	action.SetID(g.playerID)
 	action.SetFrom(g.playerPosition())
 
 	payload, err := g.encoder.MarshalAction(action)
@@ -82,16 +74,6 @@ func (g *GameServer) Move(direction string) {
 	if err != nil {
 		return
 	}
-}
-
-// pingChan implements i.GameServer.
-func (g *GameServer) PingChan() <-chan int64 {
-	return g.pingChan
-}
-
-// stateChan implements i.GameServer.
-func (g *GameServer) StateChan() <-chan i.GameState {
-	return g.stateChan
 }
 
 func (g *GameServer) handleServerResponse(t byte, p []byte) {
@@ -108,14 +90,14 @@ func (g *GameServer) handleServerResponse(t byte, p []byte) {
 		return
 	}
 
-	if g.gameState.GetVersion() < gameState.GetVersion() {
-		g.stateChan <- gameState
+	if g.gameState == nil || g.gameState.GetVersion() < gameState.GetVersion() {
 		g.gameState = gameState
+		g.onStateChange(g.gameState)
 	}
 }
 
 func (g *GameServer) handlePingResponse(ping int64) {
-	g.pingChan <- ping
+	g.onPingResult(ping)
 }
 
 func (g *GameServer) playerPosition() i.CellPosition {
@@ -128,4 +110,12 @@ func (g *GameServer) playerPosition() i.CellPosition {
 		}
 	}
 	return nil // code will no reach this; or at least I hope it does not
+}
+
+func (g *GameServer) SetOnStateChange(f func(i.GameState)) {
+	g.onStateChange = f
+}
+
+func (g *GameServer) SetOnPingResult(f func(int64)) {
+	g.onPingResult = f
 }
