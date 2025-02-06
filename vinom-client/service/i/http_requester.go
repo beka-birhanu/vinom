@@ -4,6 +4,6 @@ import "io"
 
 // HttpRequester defines an interface for HTTP requests.
 type HttpRequester interface {
-	Post(uri string, body io.Reader) (io.Reader, error)
-	Get(uri string) (io.Reader, error)
+	Post(uri string, body io.Reader, authToken string) (io.Reader, error)
+	Get(uri, authToken string) (io.Reader, error)
 }

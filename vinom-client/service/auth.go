@@ -9,13 +9,18 @@ import (
 	"github.com/beka-birhanu/vinom-client/service/i"
 )
 
-const (
-	loginUri    = "/login"
-	registerUri = "/register"
-)
-
 type Auth struct {
-	httpClient i.HttpRequester
+	httpClient  i.HttpRequester
+	loginUri    string
+	registerUri string
+}
+
+func NewAuth(hr i.HttpRequester, loginUri, registerUri string) (i.AuthServer, error) {
+	return &Auth{
+		httpClient:  hr,
+		loginUri:    loginUri,
+		registerUri: registerUri,
+	}, nil
 }
 
 // Login implements i.AuthServer.
@@ -30,7 +35,7 @@ func (a *Auth) Login(username string, password string) (*dmn.Player, string, err
 		return nil, "", err
 	}
 
-	response, err := a.httpClient.Post(loginUri, bytes.NewReader(payload))
+	response, err := a.httpClient.Post(a.loginUri, bytes.NewReader(payload), "")
 	if err != nil {
 		return nil, "", err
 	}
@@ -55,12 +60,21 @@ func (a *Auth) Login(username string, password string) (*dmn.Player, string, err
 }
 
 // Register implements i.AuthServer.
-func (a *Auth) Register(string, string) error {
-	panic("unimplemented")
-}
+func (a *Auth) Register(username string, password string) error {
+	body := &AuthRequest{
+		Username: username,
+		Password: password,
+	}
 
-func NewAuth(hr i.HttpRequester) (i.AuthServer, error) {
-	return &Auth{
-		httpClient: hr,
-	}, nil
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	_, err = a.httpClient.Post(a.registerUri, bytes.NewReader(payload), "")
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

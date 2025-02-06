@@ -8,6 +8,9 @@ import (
 	"net/url"
 )
 
+// RequestOption modifies an HTTP request.
+type RequestOption func(*http.Request)
+
 // HttpClient is a struct that implements the HttpRequester interface.
 type HttpClient struct {
 	Client  *http.Client
@@ -36,7 +39,7 @@ func (h *HttpClient) buildURL(path string) (string, error) {
 }
 
 // Post sends a POST request to the specified path with the provided body.
-func (h *HttpClient) Post(path string, body io.Reader) (io.Reader, error) {
+func (h *HttpClient) Post(path string, body io.Reader, authToken string) (io.Reader, error) {
 	uri, err := h.buildURL(path)
 	if err != nil {
 		return nil, err
@@ -48,7 +51,14 @@ func (h *HttpClient) Post(path string, body io.Reader) (io.Reader, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := h.Client.Do(req)
+
+	var resp *http.Response
+	if authToken != "" {
+		resp, err = h.send(req, WithBearerToken(authToken))
+	} else {
+		resp, err = h.send(req)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +77,7 @@ func (h *HttpClient) Post(path string, body io.Reader) (io.Reader, error) {
 }
 
 // Get sends a GET request to the specified path.
-func (h *HttpClient) Get(path string) (io.Reader, error) {
+func (h *HttpClient) Get(path, authToken string) (io.Reader, error) {
 	uri, err := h.buildURL(path)
 	if err != nil {
 		return nil, err
@@ -78,7 +88,13 @@ func (h *HttpClient) Get(path string) (io.Reader, error) {
 		return nil, err
 	}
 
-	resp, err := h.Client.Do(req)
+	var resp *http.Response
+	if authToken != "" {
+		resp, err = h.send(req, WithBearerToken(authToken))
+	} else {
+		resp, err = h.send(req)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -94,4 +110,18 @@ func (h *HttpClient) Get(path string) (io.Reader, error) {
 	}
 
 	return bytes.NewReader(responseBody), nil
+}
+
+func (h *HttpClient) send(req *http.Request, opts ...RequestOption) (*http.Response, error) {
+	for _, opt := range opts {
+		opt(req)
+	}
+
+	return h.Client.Do(req)
+}
+
+func WithBearerToken(token string) RequestOption {
+	return func(req *http.Request) {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 }
