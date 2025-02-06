@@ -31,7 +31,6 @@ type Game struct {
 	gameServer   i.GameServer
 	playerColors map[uuid.UUID]string
 	playerID     uuid.UUID
-	app          *tview.Application
 	mazeTV       *tview.TextView
 	scoreTV      *tview.TextView
 	pingTV       *tview.TextView
@@ -43,7 +42,6 @@ func NewGame(gmSrvr i.GameServer, pID uuid.UUID) *Game {
 	return &Game{
 		gameServer: gmSrvr,
 		playerID:   pID,
-		app:        tview.NewApplication(),
 		mazeTV:     tview.NewTextView().SetDynamicColors(true),
 		scoreTV:    tview.NewTextView().SetDynamicColors(true),
 		pingTV:     tview.NewTextView().SetDynamicColors(true),
@@ -63,25 +61,25 @@ func (g *Game) handleInput(event *tcell.EventKey) *tcell.EventKey {
 }
 
 // startApp starts the Tview app with the layout
-func (g *Game) StartApp() {
+func (g *Game) StartApp(app *tview.Application) {
 	// Combine maze, scoreboard, and ping into a Flex layout
 	layout := tview.NewFlex().
 		AddItem(g.mazeTV, 0, 3, true).   // Maze occupies 3/4 of the screen width
 		AddItem(g.scoreTV, 0, 1, false). // Scoreboard
 		AddItem(g.pingTV, 0, 1, false)   // Ping
 
-	g.app.SetInputCapture(g.handleInput)
+	app.SetInputCapture(g.handleInput)
 	g.mazeTV.SetText("loading...")
 
 	go func() {
-		if err := g.app.SetRoot(layout, true).Run(); err != nil {
+		if err := app.SetRoot(layout, true).Run(); err != nil {
 			panic(err)
 		}
 	}()
 	g.listenAndRender()
 
 	for range g.stopChan {
-		g.app.Stop()
+		app.Stop()
 		return
 	}
 }
