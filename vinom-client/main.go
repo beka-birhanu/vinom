@@ -1,68 +1,97 @@
 package main
 
 import (
-	"fmt"
+	"crypto/rsa"
+	"net"
+	"time"
 
+	"github.com/beka-birhanu/vinom-client/config"
+	"github.com/beka-birhanu/vinom-client/controller"
+	"github.com/beka-birhanu/vinom-client/dmn"
+	"github.com/beka-birhanu/vinom-client/infrastruture/crypto"
+	"github.com/beka-birhanu/vinom-client/infrastruture/http"
+	gamepb "github.com/beka-birhanu/vinom-client/infrastruture/pb_encoder/game"
+	udppb "github.com/beka-birhanu/vinom-client/infrastruture/pb_encoder/udp"
+	"github.com/beka-birhanu/vinom-client/infrastruture/udp"
+	"github.com/beka-birhanu/vinom-client/service"
 	"github.com/rivo/tview"
 )
 
-func main() {
-	app := tview.NewApplication()
-	signInPage := signInForm(app)
+var player *dmn.Player
+var app *tview.Application
 
-	if err := app.SetRoot(signInPage, true).Run(); err != nil {
+func main() {
+	httpClient := http.NewHttpClient(config.Envs.ServerAddr)
+	authService, err := service.NewAuth(httpClient, config.Envs.LoginUri, config.Envs.RegisterUri)
+	if err != nil {
+		panic(err)
+	}
+	matchService, err := service.NewMatchMaking(service.MatchMakingConfig{
+		HttpClient: httpClient,
+		MatchUri:   config.Envs.MatchUri,
+	})
+
+	app = tview.NewApplication()
+	matchPage, err := controller.NewMatchingRoomPage(matchService, startGame)
+	if err != nil {
+		panic(err)
+	}
+
+	authPage, err := controller.NewAuthPage(authService, func(p *dmn.Player, token string) {
+		player = p
+		err := matchPage.Start(app, player.ID, token)
+		if err != nil {
+			panic(err)
+		}
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	err = authPage.Start(app)
+	if err != nil {
 		panic(err)
 	}
 }
 
-func signInForm(app *tview.Application) tview.Primitive {
-	header := tview.NewTextView().SetText("Login / Sign Up").SetTextAlign(tview.AlignCenter)
+func startGame(key []byte, addr string) {
+	serverAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		panic(err)
+	}
 
-	form := tview.NewForm()
-	form.AddInputField("Username:", "", 20, nil, nil)
-	form.AddPasswordField("Password:", "", 20, '*', nil)
+	aesKey := []byte{113, 110, 25, 53, 11, 53, 68, 33, 17, 36, 22, 7, 125, 11, 35, 16, 83, 61, 59, 49, 31, 22, 69, 17, 24, 125, 11, 35, 16, 83, 61, 59}
+	updClient, err := udp.NewClientServerManager(
+		udp.ClientConfig{
+			ServerAddr:         serverAddr,
+			Encoder:            &udppb.Protobuf{},
+			AsymmCrypto:        crypto.NewRSA(&rsa.PrivateKey{}),
+			ServerAsymmPubKey:  key,
+			SymmCrypto:         crypto.NewAESCBC(),
+			ClientSymmKey:      aesKey,
+			OnConnectionSucces: func() {},
+		},
+		udp.ClientWithPingInterval(2*time.Second),
+	)
 
-	form.AddButton("Login", func() {
-		username := form.GetFormItem(0).(*tview.InputField).GetText()
-		password := form.GetFormItem(1).(*tview.InputField).GetText()
-		fmt.Printf("Logging in with %s and %s\n", username, password)
+	if err != nil {
+		panic(err)
+	}
+
+	gameService, err := service.NewGameServer(&service.GameServerConfig{
+		ServerConnection: updClient,
+		Encoder:          &gamepb.Protobuf{},
+		PlayerID:         player.ID,
 	})
 
-	form.AddButton("Sign Up", func() {
-		app.SetRoot(signUpForm(app), true)
-	})
+	if err != nil {
+		panic(err)
+	}
 
-	form.AddButton("Quit", func() {
-		app.Stop()
-	})
+	gamePage, err := controller.NewGame(gameService, player.ID)
+	if err != nil {
+		panic(err)
+	}
 
-	flex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(header, 3, 1, false).
-		AddItem(form, 0, 1, true)
-
-	return flex
-}
-
-func signUpForm(app *tview.Application) tview.Primitive {
-	header := tview.NewTextView().SetText("Sign Up").SetTextAlign(tview.AlignCenter)
-
-	form := tview.NewForm()
-	form.AddInputField("Username:", "", 20, nil, nil)
-	form.AddPasswordField("Password:", "", 20, '*', nil)
-
-	form.AddButton("Register", func() {
-		username := form.GetFormItem(0).(*tview.InputField).GetText()
-		password := form.GetFormItem(1).(*tview.InputField).GetText()
-		fmt.Printf("Registering %s with password %s\n", username, password)
-	})
-
-	form.AddButton("Back", func() {
-		app.SetRoot(signInForm(app), true)
-	})
-
-	flex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(header, 3, 1, false).
-		AddItem(form, 0, 1, true)
-
-	return flex
+	gamePage.Start(app, player.ID[:])
 }
