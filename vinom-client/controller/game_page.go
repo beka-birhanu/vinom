@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/beka-birhanu/vinom-client/service/i"
@@ -83,7 +84,9 @@ func (g *Game) Start(app *tview.Application, authToken []byte) {
 
 	g.app.SetInputCapture(g.handleInput)
 	g.mazeTV.SetText("loading...")
-	go g.gameServer.Start(authToken)
+	go func() {
+		_ = g.gameServer.Start(authToken)
+	}()
 
 	go func() {
 		if err := app.SetRoot(layout, true).Run(); err != nil {
@@ -97,14 +100,59 @@ func (g *Game) Start(app *tview.Application, authToken []byte) {
 	}
 }
 
-func isPlayerPos(x int, y int, players []i.Player) i.Player {
-	for _, player := range players {
-		if int(player.RetrivePos().GetRow())*2 == y && int(player.RetrivePos().GetCol())*2+1 == x {
-			return player
-		}
-	}
+func (g *Game) renderScoreboard(gs i.GameState) {
+	players := gs.RetrivePlayers()
 
-	return nil
+	// Sort by score if not then by ID for consistency
+	sort.Slice(players, func(i, j int) bool {
+		return (players[i].GetReward() > players[j].GetReward() ||
+			players[i].GetID().String() < players[j].GetID().String())
+	})
+
+	g.scoreTV.Clear()
+
+	// Set headers
+	g.scoreTV.SetCell(0, 0, tview.NewTableCell("Player").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+	g.scoreTV.SetCell(0, 1, tview.NewTableCell("Score").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+
+	// Add player scores
+	for i, player := range players {
+		g.scoreTV.SetCell(i+1, 0, tview.NewTableCell(g.playerRepr(player.GetID(), players)).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
+		g.scoreTV.SetCell(i+1, 1, tview.NewTableCell(fmt.Sprintf("%d", player.GetReward())).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
+	}
+}
+
+func (g *Game) renderPing(ping int64) {
+	text := fmt.Sprintf("[yellow]PING\n\n[white]Ping: [cyan]%dms", ping)
+	g.pingTV.SetText(text)
+	g.app.Draw()
+}
+
+// renderMaze renders the maze into a string
+func (g *Game) renderMaze(gs i.GameState) {
+	var builder strings.Builder
+	grid := mazeGridRepr(gs)
+	playersRpr := g.playerMap(gs)
+
+	// Top border
+	builder.WriteString(strings.Repeat("[:blue]  [:black]", len(grid[0])) + "\n")
+	for y, r := range grid {
+		for x, c := range r {
+			if repr, ok := playersRpr[fmt.Sprintf("%d,%d", x, y)]; ok {
+				builder.WriteString(repr) // Player position
+			} else if c == -1 {
+				builder.WriteString("[:blue]  [:black]") // Wall
+			} else if c == 1 {
+				builder.WriteString("[white] ●[black]") // Reward 1
+			} else if c == 5 {
+				builder.WriteString("[yellow] ●[black]") // Reward 5
+			} else {
+				builder.WriteString("  ") // Empty space
+			}
+		}
+		builder.WriteString("\n")
+	}
+	g.mazeTV.SetText(builder.String())
 }
 
 func (g *Game) playerRepr(pID uuid.UUID, players []i.Player) string {
@@ -125,8 +173,18 @@ func (g *Game) playerRepr(pID uuid.UUID, players []i.Player) string {
 	return g.playerColors[pID]
 }
 
-// gridRepr generates a grid representation from the maze
-func gridRepr(gs i.GameState) [][]int {
+func (g *Game) playerMap(gs i.GameState) map[string]string {
+	rprMap := make(map[string]string)
+	for _, p := range gs.RetrivePlayers() {
+		key := fmt.Sprintf("%d,%d", p.RetrivePos().GetCol()*2+1, p.RetrivePos().GetRow()*2)
+		rprMap[key] = g.playerRepr(p.GetID(), gs.RetrivePlayers())
+	}
+
+	return rprMap
+}
+
+// mazeGridRepr generates a grid representation from the maze skipping players.
+func mazeGridRepr(gs i.GameState) [][]int {
 	var grid [][]int
 	for _, row := range gs.RetriveMaze().RetriveGrid() {
 		r := make([]int, 0)
@@ -159,52 +217,4 @@ func gridRepr(gs i.GameState) [][]int {
 		grid = append(grid, r)
 	}
 	return grid
-}
-
-// renderMaze renders the maze into a string
-func (g *Game) renderMaze(gs i.GameState) {
-	var builder strings.Builder
-	// Top border
-	grid := gridRepr(gs)
-	players := gs.RetrivePlayers()
-
-	builder.WriteString(strings.Repeat("[:blue]  [:black]", len(grid[0])) + "\n")
-	for y, r := range grid {
-		for x, c := range r {
-			if player := isPlayerPos(x, y, players); player != nil {
-				builder.WriteString(g.playerRepr(player.GetID(), players)) // Player position
-			} else if c == -1 {
-				builder.WriteString("[:blue]  [:black]") // Wall
-			} else if c == 1 {
-				builder.WriteString("[white] ●[black]") // Reward 1
-			} else if c == 5 {
-				builder.WriteString("[yellow] ●[black]") // Reward 5
-			} else {
-				builder.WriteString("  ") // Empty space
-			}
-		}
-		builder.WriteString("\n")
-	}
-	g.mazeTV.SetText(builder.String())
-}
-
-func (g *Game) renderScoreboard(gs i.GameState) {
-	players := gs.RetrivePlayers()
-	g.scoreTV.Clear()
-
-	// Set headers
-	g.scoreTV.SetCell(0, 0, tview.NewTableCell("Player").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
-	g.scoreTV.SetCell(0, 1, tview.NewTableCell("Score").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
-
-	// Add player scores
-	for i, player := range players {
-		g.scoreTV.SetCell(i+1, 0, tview.NewTableCell(g.playerRepr(player.GetID(), players)).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
-		g.scoreTV.SetCell(i+1, 1, tview.NewTableCell(fmt.Sprintf("%d", player.GetReward())).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
-	}
-}
-
-func (g *Game) renderPing(ping int64) {
-	text := fmt.Sprintf("[yellow]PING\n\n[white]Ping: [cyan]%dms", ping)
-	g.pingTV.SetText(text)
-	g.app.Draw()
 }
