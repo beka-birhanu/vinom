@@ -1,0 +1,99 @@
+services:
+  db:
+    image: mongo:8.0
+    container_name: vinom_db
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mongosh",
+          "-u",
+          "${DB_USER}",
+          "-p",
+          "${DB_PASS}",
+          "--eval",
+          "db.adminCommand('ping')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${DB_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASS}
+    volumes:
+      - db_data:/data/db
+    networks:
+      - app_network
+    ports:
+      - "${DB_PORT}:${DB_PORT}"
+
+  redis:
+    image: redis:7.4
+    container_name: vinom_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "localhost", "--raw", "PING"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - app_network
+    ports:
+      - "${REDIS_PORT}:${REDIS_PORT}"
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev-stage
+    container_name: vinom_app
+    ports:
+      - "${REST_PORT}:${REST_PORT}"
+      - "${UDP_PORT}:${UDP_PORT}/udp"
+    volumes:
+      - .:/app
+      - /app/tmp
+    environment:
+      # REST
+      REST_PORT: ${REST_PORT}
+      GIN_MODE: ${GIN_MODE}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      # MongoDB
+      DB_HOST: db
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASS: ${DB_PASS}
+      DB_NAME: ${DB_NAME}
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: ${REDIS_PORT}
+      # Matchmaking
+      MAX_PLAYER: ${MAX_PLAYER}
+      RANK_TOLERANCE: ${RANK_TOLERANCE}
+      LATENCY_TOLERANCE: ${LATENCY_TOLERANCE}
+      # UDP
+      UDP_PORT: ${UDP_PORT}
+      UDP_BUFFER_SIZE: ${UDP_BUFFER_SIZE}
+      UDP_HEARTBEAT_EXPIRATION: ${UDP_HEARTBEAT_EXPIRATION}
+    networks:
+      - app_network
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+networks:
+  app_network:
+    driver: bridge
+
+volumes:
+  db_data:
+    driver: local
+  redis_data:
+    driver: local
