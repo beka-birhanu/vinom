@@ -76,4 +76,4 @@ To solve this, I came up with the idea of giving each client their own version n
 ---
 
 Note: Dancing is key.
-![gopher](./assets/logo/gopher-dance-long-3x.gif)
+![gopher](./assets/gopher-dance-long-3x.gif)
