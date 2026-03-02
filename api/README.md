@@ -12,7 +12,9 @@ First, I worked on utility logic that was new and challenging for me, such as:
 
 ## Is It Complete?
 
-No, and that's okay. One piece of advice I received from senior engineers is that for personal projects, you should stop when you feel you've learned what you set out to learn. My goal was to understand microservices, sockets, system design, RPC, Redis, Kubernetes, and RabbitMQ. I believe I've gained solid knowledge in these areas. Now that I am done with it I have changed the architecture to a monolith for the sake of simplicity.
+No, and that's okay. I feel I've learned what I set out to learn. My goal was to understand microservices, sockets, system design, RPC, Redis, Kubernetes, and RabbitMQ. I believe I've gained solid knowledge in these areas.
+
+Now that I am done with it I have changed the architecture to a monolith for the sake of simplicity.
 
 ## Why Did I Build the Client Side in the Terminal?
 
@@ -76,4 +78,4 @@ To solve this, I came up with the idea of giving each client their own version n
 ---
 
 Note: Dancing is key.
-![gopher](./assets/logo/gopher-dance-long-3x.gif)
+![gopher](./assets/gopher-dance-long-3x.gif)
