@@ -27,26 +27,52 @@ var vimDirections = map[rune]string{
 	'l': "East",  // Vim motion: l for right
 }
 
+type playerDisplay struct {
+	maze       string // 2 visible chars + color tags, background reset at end
+	scoreboard string // readable label with color tags
+}
+
 // Game holds the maze, score, ping, and player information
 type Game struct {
-	gameServer   i.GameServer
-	playerColors map[uuid.UUID]string
-	playerID     uuid.UUID
-	app          *tview.Application
-	mazeTV       *tview.TextView
-	scoreTV      *tview.Table
-	pingTV       *tview.TextView
-	stopChan     chan struct{}
+	gameServer     i.GameServer
+	playerDisplays map[uuid.UUID]playerDisplay
+	playerID       uuid.UUID
+	app            *tview.Application
+	mazeTV         *tview.TextView
+	scoreTV        *tview.Table
+	pingTV         *tview.TextView
+	stopChan       chan struct{}
 }
 
 // NewGame creates a new MazeGame instance
 func NewGame(gmSrvr i.GameServer, pID uuid.UUID) (*Game, error) {
+	mazeTV := tview.NewTextView().SetDynamicColors(true)
+	mazeTV.SetBackgroundColor(tcell.GetColor("#11111b")) // Catppuccin Crust
+	mazeTV.SetBorder(true)
+	mazeTV.SetTitle(" VINOM ")
+	mazeTV.SetBorderColor(catMauve)
+	mazeTV.SetTitleColor(catBlue)
+
+	scoreTV := tview.NewTable()
+	scoreTV.SetBackgroundColor(catBase)
+	scoreTV.SetBorder(true)
+	scoreTV.SetTitle(" Scoreboard ")
+	scoreTV.SetBorderColor(catMauve)
+	scoreTV.SetTitleColor(catBlue)
+
+	pingTV := tview.NewTextView().SetDynamicColors(true)
+	pingTV.SetBackgroundColor(catBase)
+	pingTV.SetBorder(true)
+	pingTV.SetTitle(" Network ")
+	pingTV.SetBorderColor(catMauve)
+	pingTV.SetTitleColor(catBlue)
+
 	return &Game{
 		gameServer: gmSrvr,
 		playerID:   pID,
-		mazeTV:     tview.NewTextView().SetDynamicColors(true),
-		scoreTV:    tview.NewTable(),
-		pingTV:     tview.NewTextView().SetDynamicColors(true),
+		mazeTV:     mazeTV,
+		scoreTV:    scoreTV,
+		pingTV:     pingTV,
 		stopChan:   make(chan struct{}),
 	}, nil
 }
@@ -76,11 +102,26 @@ func (g *Game) Start(app *tview.Application, authToken []byte) {
 		g.app.Draw()
 	})
 
-	// Combine maze, scoreboard, and ping into a Flex layout
-	layout := tview.NewFlex().
-		AddItem(g.mazeTV, 0, 3, true).   // Maze occupies 3/4 of the screen width
-		AddItem(g.scoreTV, 0, 1, false). // Scoreboard
-		AddItem(g.pingTV, 0, 1, false)   // Ping
+	statusBar := tview.NewTextView().
+		SetText("[#6c7086]↑↓←→ / hjkl: Move   Ctrl+C: Quit[#cdd6f4]").
+		SetTextAlign(tview.AlignCenter).
+		SetDynamicColors(true)
+	statusBar.SetBackgroundColor(catBase)
+
+	rightSidebar := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(g.scoreTV, 0, 2, false).
+		AddItem(g.pingTV, 0, 1, false)
+	rightSidebar.SetBackgroundColor(catBase)
+
+	topRow := tview.NewFlex().
+		AddItem(g.mazeTV, 0, 3, true).
+		AddItem(rightSidebar, 0, 1, false)
+	topRow.SetBackgroundColor(catBase)
+
+	layout := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(topRow, 0, 1, true).
+		AddItem(statusBar, 1, 0, false)
+	layout.SetBackgroundColor(catBase)
 
 	g.app.SetInputCapture(g.handleInput)
 	g.mazeTV.SetText("loading...")
@@ -112,18 +153,21 @@ func (g *Game) renderScoreboard(gs i.GameState) {
 	g.scoreTV.Clear()
 
 	// Set headers
-	g.scoreTV.SetCell(0, 0, tview.NewTableCell("Player").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
-	g.scoreTV.SetCell(0, 1, tview.NewTableCell("Score").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+	g.scoreTV.SetCell(0, 0, tview.NewTableCell("Player").SetTextColor(catMauve).SetAlign(tview.AlignCenter))
+	g.scoreTV.SetCell(0, 1, tview.NewTableCell("Score").SetTextColor(catMauve).SetAlign(tview.AlignCenter))
+
+	g.initPlayerDisplays(players)
 
 	// Add player scores
 	for i, player := range players {
-		g.scoreTV.SetCell(i+1, 0, tview.NewTableCell(g.playerRepr(player.GetID(), players)).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
-		g.scoreTV.SetCell(i+1, 1, tview.NewTableCell(fmt.Sprintf("%d", player.GetReward())).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignRight))
+		label := g.playerDisplays[player.GetID()].scoreboard
+		g.scoreTV.SetCell(i+1, 0, tview.NewTableCell(label).SetAlign(tview.AlignLeft))
+		g.scoreTV.SetCell(i+1, 1, tview.NewTableCell(fmt.Sprintf("%d", player.GetReward())).SetTextColor(tcell.GetColor("#a6e3a1")).SetAlign(tview.AlignRight))
 	}
 }
 
 func (g *Game) renderPing(ping int64) {
-	text := fmt.Sprintf("[yellow]PING\n\n[white]Ping: [cyan]%dms", ping)
+	text := fmt.Sprintf("[#cba6f7]PING\n\n[#cdd6f4]Ping: [#89dceb]%dms", ping)
 	g.pingTV.SetText(text)
 	g.app.Draw()
 }
@@ -134,18 +178,32 @@ func (g *Game) renderMaze(gs i.GameState) {
 	grid := mazeGridRepr(gs)
 	playersRpr := g.playerMap(gs)
 
-	// Top border
-	builder.WriteString(strings.Repeat("[:blue]  [:black]", len(grid[0])) + "\n")
+	// Top border using HasNorthWall from the first row of cells
+	firstRow := gs.RetriveMaze().RetriveGrid()[0]
+	for _, cell := range firstRow {
+		if cell.HasWestWall() || cell.HasNorthWall() {
+			builder.WriteString("[:#45475a:]  [:#11111b:]")
+		} else {
+			builder.WriteString("  ")
+		}
+		if cell.HasNorthWall() {
+			builder.WriteString("[:#45475a:]  [:#11111b:]")
+		} else {
+			builder.WriteString("  ")
+		}
+	}
+	builder.WriteString("[:#45475a:]  [:#11111b:]\n") // East border corner
+
 	for y, r := range grid {
 		for x, c := range r {
 			if repr, ok := playersRpr[fmt.Sprintf("%d,%d", x, y)]; ok {
 				builder.WriteString(repr) // Player position
 			} else if c == -1 {
-				builder.WriteString("[:blue]  [:black]") // Wall
+				builder.WriteString("[:#45475a:]  [:#11111b:]") // Wall (Surface1 bg)
 			} else if c == 1 {
-				builder.WriteString("[white] ●[black]") // Reward 1
+				builder.WriteString("[#cdd6f4] ●[#cdd6f4]") // Reward 1 (Text)
 			} else if c == 5 {
-				builder.WriteString("[yellow] ●[black]") // Reward 5
+				builder.WriteString("[#f9e2af] ●[#cdd6f4]") // Reward 5 (Yellow)
 			} else {
 				builder.WriteString("  ") // Empty space
 			}
@@ -155,31 +213,44 @@ func (g *Game) renderMaze(gs i.GameState) {
 	g.mazeTV.SetText(builder.String())
 }
 
-func (g *Game) playerRepr(pID uuid.UUID, players []i.Player) string {
-	if g.playerColors == nil {
-		g.playerColors = make(map[uuid.UUID]string)
-		colors := [6]string{"yellow", "orange", "lime", "purple", "magenta"}
-		i := 0
-		for _, p := range players {
-			if p.GetID() == g.playerID {
-				g.playerColors[p.GetID()] = "⭕"
-			} else {
-				g.playerColors[p.GetID()] = fmt.Sprintf("[%s]P%d[black]", colors[i], i+1)
+// initPlayerDisplays builds display strings for all players (called once on first render).
+// Other-player indices are assigned independently of the current player's position in the list,
+// so numbering is always contiguous (P1, P2, …) and color assignment is correct.
+func (g *Game) initPlayerDisplays(players []i.Player) {
+	if g.playerDisplays != nil {
+		return
+	}
+	g.playerDisplays = make(map[uuid.UUID]playerDisplay)
+
+	// Catppuccin Mocha accent palette — excludes green (reserved for self)
+	colors := []string{"#cba6f7", "#89b4fa", "#f9e2af", "#fab387", "#f38ba8", "#74c7ec"}
+	other := 0
+	for _, p := range players {
+		if p.GetID() == g.playerID {
+			g.playerDisplays[p.GetID()] = playerDisplay{
+				maze:       "[#a6e3a1::b] ◆[:#11111b:][-::-]", // bold green diamond — "you"
+				scoreboard: "[#a6e3a1::b]You[-::-]",
 			}
-			i++
+		} else {
+			color := colors[other%len(colors)]
+			num := other + 1
+			g.playerDisplays[p.GetID()] = playerDisplay{
+				maze:       fmt.Sprintf("[%s::b] %d[:#11111b:][-::-]", color, num),
+				scoreboard: fmt.Sprintf("[%s::b]P%d[-::-]", color, num),
+			}
+			other++
 		}
 	}
-
-	return g.playerColors[pID]
 }
 
 func (g *Game) playerMap(gs i.GameState) map[string]string {
+	players := gs.RetrivePlayers()
+	g.initPlayerDisplays(players)
 	rprMap := make(map[string]string)
-	for _, p := range gs.RetrivePlayers() {
+	for _, p := range players {
 		key := fmt.Sprintf("%d,%d", p.RetrivePos().GetCol()*2+1, p.RetrivePos().GetRow()*2)
-		rprMap[key] = g.playerRepr(p.GetID(), gs.RetrivePlayers())
+		rprMap[key] = g.playerDisplays[p.GetID()].maze
 	}
-
 	return rprMap
 }
 

@@ -1,7 +1,11 @@
 package controller
 
 import (
+	"strings"
+	"time"
+
 	"github.com/beka-birhanu/vinom-client/service/i"
+	"github.com/gdamore/tcell/v2"
 	"github.com/google/uuid"
 	"github.com/rivo/tview"
 )
@@ -28,34 +32,78 @@ func (m *MatchingRoomPage) Start(app *tview.Application, ID uuid.UUID, token str
 }
 
 func (m *MatchingRoomPage) matchingRoomUI(app *tview.Application, ID uuid.UUID, token string) tview.Primitive {
-	header := tview.NewTextView().SetText("Matching Room").SetTextAlign(tview.AlignCenter)
-	footer := tview.NewTextView().SetText("").SetTextAlign(tview.AlignLeft)
+	footer := tview.NewTextView().
+		SetText("").
+		SetTextAlign(tview.AlignCenter).
+		SetDynamicColors(true)
+	footer.SetBackgroundColor(catBase)
 
 	form := tview.NewForm()
+	form.SetBackgroundColor(catBase)
+	form.SetButtonBackgroundColor(tcell.GetColor("#a6e3a1")) // Catppuccin Green
+	form.SetButtonTextColor(catBase)
 	form.AddButton("Find Match", func() {
-		footer.SetText("Searching for match...")
-		go func(footer *tview.TextView, ID uuid.UUID) {
+		done := make(chan struct{})
+
+		// Animate footer with dots while searching
+		go func() {
+			dots := 0
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					dots = (dots % 3) + 1
+					dotStr := strings.Repeat(".", dots)
+					app.QueueUpdateDraw(func() {
+						footer.SetText("[#f9e2af]Searching" + dotStr + "[#cdd6f4]")
+					})
+				case <-done:
+					return
+				}
+			}
+		}()
+
+		go func() {
 			pubKey, addr, err := m.matchService.Match(ID, token)
+			close(done)
 			if err != nil {
-				footer.SetText(err.Error())
-				app.Draw()
+				app.QueueUpdateDraw(func() {
+					footer.SetText("[#f38ba8]" + err.Error() + "[#cdd6f4]")
+				})
 				return
 			}
-
+			app.QueueUpdateDraw(func() {
+				footer.SetText("[#a6e3a1]Found a match![#cdd6f4]")
+			})
 			m.onMatch(pubKey, addr)
-			footer.SetText("Found a match for you!")
-			app.Draw()
-		}(footer, ID)
+		}()
 	})
 
 	form.AddButton("Cancel", func() {
 		app.Stop()
 	})
 
-	flex := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(header, 3, 1, false).
-		AddItem(form, 0, 1, true).
-		AddItem(footer, 0, 1, false)
+	frame := tview.NewFrame(form).SetBorders(1, 1, 0, 0, 1, 1)
+	frame.SetBorder(true)
+	frame.SetTitle(" Matchmaking ")
+	frame.SetBorderColor(catMauve)
+	frame.SetTitleColor(catBlue)
+	frame.SetBackgroundColor(catBase)
 
-	return flex
+	content := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(frame, 0, 1, true).
+		AddItem(footer, 1, 0, false)
+	content.SetBackgroundColor(catBase)
+
+	centered := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(content, 0, 2, true).
+			AddItem(nil, 0, 1, false), 0, 2, true).
+		AddItem(nil, 0, 1, false)
+	centered.SetBackgroundColor(catBase)
+
+	return centered
 }
